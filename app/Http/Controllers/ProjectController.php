@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Projects;
 use Illuminate\Http\Request;
 
 class ProjectController extends Controller
@@ -11,7 +12,8 @@ class ProjectController extends Controller
      */
     public function index()
     {
-        //
+        $projects = Projects::with('tasks','user')->get();
+        return response()->json($projects);
     }
 
     /**
@@ -27,15 +29,26 @@ class ProjectController extends Controller
      */
     public function store(Request $request)
     {
-        //
+        $data = $request->validate([
+            'user_id'    => ['required', 'integer', 'exists:users,id'],
+            'name'       => ['required', 'string', 'max:255'],
+            'start_date' => ['required', 'date'],
+            'end_date'   => ['required', 'date'],
+        ]);
+
+        $project = Projects::create($data);
+
+        return response()->json($project, 201);
     }
 
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show(Projects $project)
     {
-        //
+        //dd($project);
+        $data = Projects::with('tasks','user')->where('id',$project->id)->first();
+        return response()->json($data);
     }
 
     /**
@@ -49,16 +62,27 @@ class ProjectController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, string $id)
+    public function update(Request $request, Projects $project)
     {
-        //
+        $data = $request->validate([
+            'user_id'    => ['sometimes', 'integer', 'exists:users,id'],
+            'name'       => ['sometimes', 'string', 'max:255'],
+            'start_date' => ['sometimes', 'date'],
+            'end_date'   => ['sometimes', 'date'],
+        ]);
+
+        $project->update($data);
+
+        return response()->json($project);
     }
 
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(string $id)
+    public function destroy(Projects $project)
     {
-        //
+        $project->delete();
+
+        return response()->json(null, 204);
     }
 }
