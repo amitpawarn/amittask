@@ -2,8 +2,8 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\User;
 use Illuminate\Http\Request;
+use App\Models\User;
 
 class UserController extends Controller
 {
@@ -12,33 +12,13 @@ class UserController extends Controller
      */
     public function index()
     {
-        return response()->json(User::all());
-    }
-
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(Request $request)
-    {
-        $data = $request->validate([
-            'name'     => ['required', 'string', 'max:255'],
-            'email'    => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
-            'password' => ['required', 'string', 'min:8'],
+        $user = User::paginate(10);
+        return response()->json([
+            'status'=>true,
+            'message'=>'All users',
+            'user'=>$user
         ]);
-
-        $data['password'] = bcrypt($data['password']);
-
-        $user = User::create($data);
-
-        return response()->json($user, 201);
-    }
-
-    /**
-     * Display the specified resource.
-     */
-    public function show(User $user)
-    {
-        return response()->json($user);
+        
     }
 
     /**
@@ -46,6 +26,13 @@ class UserController extends Controller
      */
     public function update(Request $request, User $user)
     {
+        if ($user->id !== auth()->id()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You do not have access to update this user.',
+            ], 403);
+        }
+        
         $data = $request->validate([
             'name'     => ['sometimes', 'string', 'max:255'],
             'email'    => ['sometimes', 'string', 'email', 'max:255', 'unique:users,email,' . $user->id],
@@ -58,7 +45,11 @@ class UserController extends Controller
 
         $user->update($data);
 
-        return response()->json($user);
+        return response()->json([
+            'status'=>true,
+            'message'=>'user updated successfully',
+            'user'=>$user
+        ]);
     }
 
     /**
@@ -66,9 +57,18 @@ class UserController extends Controller
      */
     public function destroy(User $user)
     {
+        if ($user->id !== auth()->id()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You do not have access to update this user.',
+            ], 403);
+        }
+        
         $user->delete();
 
-        return response()->json(null, 204);
+        return response()->json([
+            'status'=>true,
+            'message'=>'User Deleted Successfully'
+        ]);
     }
 }
-

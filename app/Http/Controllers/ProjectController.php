@@ -18,7 +18,7 @@ class ProjectController extends Controller
         try {
             $projects = Projects::with('tasks', 'user')
                 ->where('user_id', auth()->id())
-                ->get();
+                ->paginate(10);
 
             if ($projects->isEmpty()) {
                 return response()->json([

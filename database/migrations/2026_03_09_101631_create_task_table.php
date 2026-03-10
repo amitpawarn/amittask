@@ -17,9 +17,10 @@ return new class extends Migration
             $table->string('task_name');
             $table->foreignId('project_id')->constrained('projects')->cascadeOnDelete();
             $table->string('project_name');
-            $table->enum('status',['pending','on-going','testing','done'])->default('pending');
-            $table->date('start_date');
-            $table->date('due_date');
+            $table->enum('status', ['pending','on-going','testing','done','complete', 'rework'])->default('pending');
+            $table->enum('priority', ['high', 'medium', 'low'])->default('medium');
+            $table->dateTime('start_date');
+            $table->dateTime('end_date');
             $table->timestamps();
         });
     }

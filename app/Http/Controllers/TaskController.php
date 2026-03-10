@@ -8,6 +8,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Auth;
+use App\Jobs\SendTaskNotificationJob;
 
 class TaskController extends Controller
 {
@@ -16,10 +18,34 @@ class TaskController extends Controller
      */
     public function index(): JsonResponse
     {
+        
         try {
-            $tasks = Task::with('project', 'user')
-                ->where('user_id', auth()->id())
-                ->get();
+            $query = Task::with('project', 'user')
+                ->where('user_id', auth()->id());
+
+            if (request('status')) {
+                $query->where('status', request('status'));
+            }
+
+            if (request('priority')) {
+                $query->where('priority', request('priority'));
+            }
+
+            if (request('start_from')) {
+                $query->where('start_date', '>=', request('start_from'));
+            }
+            if (request('start_to')) {
+                $query->where('start_date', '<=', request('start_to'));
+            }
+
+            if (request('end_from')) {
+                $query->where('end_date', '>=', request('end_from'));
+            }
+            if (request('end_to')) {
+                $query->where('end_date', '<=', request('end_to'));
+            }
+
+            $tasks = $query->paginate(10);
 
             if ($tasks->isEmpty()) {
                 return response()->json([
@@ -51,9 +77,10 @@ class TaskController extends Controller
             $data = $request->validate([
                 'task_name'  => ['required', 'string', 'max:255'],
                 'project_id' => ['required', 'integer', 'exists:projects,id'],
-                'status'     => ['required', 'in:pending,on-going,testing,done'],
+                'status'     => ['required', 'in:pending,on-going,testing,done,complete,rework'],
+                'priority'   => ['required', 'in:high,medium,low'],
                 'start_date' => ['required', 'date'],
-                'due_date'   => ['required', 'date'],
+                'end_date'   => ['required', 'date'],
             ]);
 
             $project = Projects::where('id', $data['project_id'])
@@ -70,7 +97,7 @@ class TaskController extends Controller
             $data['project_name'] = $project->name;
             $data['user_id'] = auth()->id();
             $task = Task::create($data);
-
+            SendTaskNotificationJob::dispatch($task, $data['user_id']);
             return response()->json([
                 'success' => true,
                 'data'    => $task,
@@ -135,9 +162,10 @@ class TaskController extends Controller
             $data = $request->validate([
                 'task_name'  => ['sometimes', 'string', 'max:255'],
                 'project_id' => ['sometimes', 'integer', 'exists:projects,id'],
-                'status'     => ['sometimes', 'in:pending,on-going,testing,done'],
+                'status'     => ['sometimes', 'in:complete,rework'],
+                'priority'   => ['sometimes', 'in:high,medium,low'],
                 'start_date' => ['sometimes', 'date'],
-                'due_date'   => ['sometimes', 'date'],
+                'end_date'   => ['sometimes', 'date'],
             ]);
 
             if (isset($data['project_id'])) {
