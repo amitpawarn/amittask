@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Projects;
+use App\Services\ProjectService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -10,15 +12,17 @@ use Illuminate\Validation\ValidationException;
 
 class ProjectController extends Controller
 {
+    public function __construct(private readonly ProjectService $projectService)
+    {
+    }
+
     /**
      * Display a listing of the resource.
      */
     public function index(): JsonResponse
     {
         try {
-            $projects = Projects::with('tasks', 'user')
-                ->where('user_id', auth()->id())
-                ->paginate(10);
+            $projects = $this->projectService->listForUser(auth()->id(), 10);
 
             if ($projects->isEmpty()) {
                 return response()->json([
@@ -53,8 +57,7 @@ class ProjectController extends Controller
                 'end_date'   => ['required', 'date'],
             ]);
 
-            $data['user_id'] = auth()->id();
-            $project = Projects::create($data);
+            $project = $this->projectService->createForUser(auth()->id(), $data);
 
             return response()->json([
                 'success' => true,
@@ -67,6 +70,11 @@ class ProjectController extends Controller
                 'message' => 'Validation failed.',
                 'errors'  => $e->errors(),
             ], 422);
+        } catch (AuthorizationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 403);
         } catch (\Throwable $e) {
             Log::error('Project store error: ' . $e->getMessage());
             return response()->json([
@@ -82,19 +90,17 @@ class ProjectController extends Controller
     public function show(Projects $project): JsonResponse
     {
         try {
-            if ($project->user_id !== auth()->id()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'You do not have access to this project.',
-                ], 403);
-            }
-
-            $project->load('tasks', 'user');
+            $project = $this->projectService->getForUser(auth()->id(), $project);
 
             return response()->json([
                 'success' => true,
                 'data'    => $project,
             ]);
+        } catch (AuthorizationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 403);
         } catch (\Throwable $e) {
             Log::error('Project show error: ' . $e->getMessage());
             return response()->json([
@@ -110,20 +116,13 @@ class ProjectController extends Controller
     public function update(Request $request, Projects $project): JsonResponse
     {
         try {
-            if ($project->user_id !== auth()->id()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'You do not have access to this project.',
-                ], 403);
-            }
-
             $data = $request->validate([
                 'name'       => ['sometimes', 'string', 'max:255'],
                 'start_date' => ['sometimes', 'date'],
                 'end_date'   => ['sometimes', 'date'],
             ]);
 
-            $project->update($data);
+            $project = $this->projectService->updateForUser(auth()->id(), $project, $data);
 
             return response()->json([
                 'success' => true,
@@ -136,6 +135,11 @@ class ProjectController extends Controller
                 'message' => 'Validation failed.',
                 'errors'  => $e->errors(),
             ], 422);
+        } catch (AuthorizationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 403);
         } catch (\Throwable $e) {
             Log::error('Project update error: ' . $e->getMessage());
             return response()->json([
@@ -151,19 +155,17 @@ class ProjectController extends Controller
     public function destroy(Projects $project): JsonResponse
     {
         try {
-            if ($project->user_id !== auth()->id()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'You do not have access to this project.',
-                ], 403);
-            }
-
-            $project->delete();
+            $this->projectService->deleteForUser(auth()->id(), $project);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Project deleted successfully.',
             ]);
+        } catch (AuthorizationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 403);
         } catch (\Throwable $e) {
             Log::error('Project destroy error: ' . $e->getMessage());
             return response()->json([

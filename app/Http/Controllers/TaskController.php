@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Projects;
 use App\Models\Task;
+use App\Services\TaskService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -13,6 +15,10 @@ use App\Jobs\SendTaskNotificationJob;
 
 class TaskController extends Controller
 {
+    public function __construct(private readonly TaskService $taskService)
+    {
+    }
+
     /**
      * Display a listing of the resource.
      */
@@ -20,32 +26,14 @@ class TaskController extends Controller
     {
         
         try {
-            $query = Task::with('project', 'user')
-                ->where('user_id', auth()->id());
-
-            if (request('status')) {
-                $query->where('status', request('status'));
-            }
-
-            if (request('priority')) {
-                $query->where('priority', request('priority'));
-            }
-
-            if (request('start_from')) {
-                $query->where('start_date', '>=', request('start_from'));
-            }
-            if (request('start_to')) {
-                $query->where('start_date', '<=', request('start_to'));
-            }
-
-            if (request('end_from')) {
-                $query->where('end_date', '>=', request('end_from'));
-            }
-            if (request('end_to')) {
-                $query->where('end_date', '<=', request('end_to'));
-            }
-
-            $tasks = $query->paginate(10);
+            $tasks = $this->taskService->listForUser(auth()->id(), [
+                'status'     => request('status'),
+                'priority'   => request('priority'),
+                'start_from' => request('start_from'),
+                'start_to'   => request('start_to'),
+                'end_from'   => request('end_from'),
+                'end_to'     => request('end_to'),
+            ], 10);
 
             if ($tasks->isEmpty()) {
                 return response()->json([
@@ -83,21 +71,12 @@ class TaskController extends Controller
                 'end_date'   => ['required', 'date'],
             ]);
 
-            $project = Projects::where('id', $data['project_id'])
-                ->where('user_id', auth()->id())
-                ->first();
+            $userId = auth()->id();
+            $task = $this->taskService->createForUser($userId, $data);
 
-            if (!$project) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Project not found or you do not have access to it.',
-                ], 404);
+            if (! app()->environment('testing')) {
+                SendTaskNotificationJob::dispatch($task, $userId);
             }
-
-            $data['project_name'] = $project->name;
-            $data['user_id'] = auth()->id();
-            $task = Task::create($data);
-            SendTaskNotificationJob::dispatch($task, $data['user_id']);
             return response()->json([
                 'success' => true,
                 'data'    => $task,
@@ -109,6 +88,20 @@ class TaskController extends Controller
                 'message' => 'Validation failed.',
                 'errors'  => $e->errors(),
             ], 422);
+        } catch (\RuntimeException $e) {
+            $code = $e->getCode();
+            if ($code < 400 || $code > 599) {
+                $code = 500;
+            }
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $code);
+        } catch (AuthorizationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 403);
         } catch (\Throwable $e) {
             Log::error('Task store error: ' . $e->getMessage());
             return response()->json([
@@ -124,19 +117,17 @@ class TaskController extends Controller
     public function show(Task $task): JsonResponse
     {
         try {
-            if ($task->user_id !== auth()->id()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'You do not have access to this task.',
-                ], 403);
-            }
-
-            $task->load('project', 'user');
+            $task = $this->taskService->getForUser(auth()->id(), $task);
 
             return response()->json([
                 'success' => true,
                 'data'    => $task,
             ]);
+        } catch (AuthorizationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 403);
         } catch (\Throwable $e) {
             Log::error('Task show error: ' . $e->getMessage());
             return response()->json([
@@ -152,13 +143,6 @@ class TaskController extends Controller
     public function update(Request $request, Task $task): JsonResponse
     {
         try {
-            if ($task->user_id !== auth()->id()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'You do not have access to this task.',
-                ], 403);
-            }
-
             $data = $request->validate([
                 'task_name'  => ['sometimes', 'string', 'max:255'],
                 'project_id' => ['sometimes', 'integer', 'exists:projects,id'],
@@ -168,21 +152,7 @@ class TaskController extends Controller
                 'end_date'   => ['sometimes', 'date'],
             ]);
 
-            if (isset($data['project_id'])) {
-                $project = Projects::where('id', $data['project_id'])
-                    ->where('user_id', auth()->id())
-                    ->first();
-
-                if (!$project) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Project not found or you do not have access to it.',
-                    ], 404);
-                }
-                $data['project_name'] = $project->name;
-            }
-
-            $task->update($data);
+            $task = $this->taskService->updateForUser(auth()->id(), $task, $data);
 
             return response()->json([
                 'success' => true,
@@ -195,6 +165,20 @@ class TaskController extends Controller
                 'message' => 'Validation failed.',
                 'errors'  => $e->errors(),
             ], 422);
+        } catch (\RuntimeException $e) {
+            $code = $e->getCode();
+            if ($code < 400 || $code > 599) {
+                $code = 500;
+            }
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $code);
+        } catch (AuthorizationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 403);
         } catch (\Throwable $e) {
             Log::error('Task update error: ' . $e->getMessage());
             return response()->json([
@@ -210,19 +194,17 @@ class TaskController extends Controller
     public function destroy(Task $task): JsonResponse
     {
         try {
-            if ($task->user_id !== auth()->id()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'You do not have access to this task.',
-                ], 403);
-            }
-
-            $task->delete();
+            $this->taskService->deleteForUser(auth()->id(), $task);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Task deleted successfully.',
             ]);
+        } catch (AuthorizationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 403);
         } catch (\Throwable $e) {
             Log::error('Task destroy error: ' . $e->getMessage());
             return response()->json([
