@@ -4,92 +4,203 @@ namespace App\Http\Controllers;
 
 use App\Models\Projects;
 use App\Models\Task;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class TaskController extends Controller
 {
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(): JsonResponse
     {
-        $tasks = Task::with('project','user')->get(); 
-        return response()->json($tasks);
-    }
+        try {
+            $tasks = Task::with('project', 'user')
+                ->where('user_id', auth()->id())
+                ->get();
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
+            if ($tasks->isEmpty()) {
+                return response()->json([
+                    'success' => true,
+                    'data'    => [],
+                    'message' => 'No tasks found.',
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data'    => $tasks,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Task index error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch tasks.',
+            ], 500);
+        }
     }
 
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
-        $data = $request->validate([
-            'user_id'      => ['required', 'integer', 'exists:users,id'],
-            'task_name'    => ['required', 'string', 'max:255'],
-            'project_id'   => ['required', 'integer', 'exists:projects,id'],
-            'status'       => ['required', 'in:pending,on-going,testing,done'],
-            'start_date'   => ['required', 'date'],
-            'due_date'     => ['required', 'date'],
-        ]);
+        try {
+            $data = $request->validate([
+                'task_name'  => ['required', 'string', 'max:255'],
+                'project_id' => ['required', 'integer', 'exists:projects,id'],
+                'status'     => ['required', 'in:pending,on-going,testing,done'],
+                'start_date' => ['required', 'date'],
+                'due_date'   => ['required', 'date'],
+            ]);
 
-        $project = Projects::find($data['project_id']);
-        $data['project_name'] = $project->name;
-        $task = Task::create($data);
+            $project = Projects::where('id', $data['project_id'])
+                ->where('user_id', auth()->id())
+                ->first();
 
-        return response()->json($task, 201);
+            if (!$project) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Project not found or you do not have access to it.',
+                ], 404);
+            }
+
+            $data['project_name'] = $project->name;
+            $data['user_id'] = auth()->id();
+            $task = Task::create($data);
+
+            return response()->json([
+                'success' => true,
+                'data'    => $task,
+                'message' => 'Task created successfully.',
+            ], 201);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'errors'  => $e->errors(),
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Task store error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to create task.',
+            ], 500);
+        }
     }
 
     /**
      * Display the specified resource.
      */
-    public function show(Task $task)
+    public function show(Task $task): JsonResponse
     {
-        $tasks = Task::with('project','user')->where('id',$task->id)->first();
-        return response()->json($task);
-    }
+        try {
+            if ($task->user_id !== auth()->id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You do not have access to this task.',
+                ], 403);
+            }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
+            $task->load('project', 'user');
+
+            return response()->json([
+                'success' => true,
+                'data'    => $task,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Task show error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch task.',
+            ], 500);
+        }
     }
 
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, Task $task)
+    public function update(Request $request, Task $task): JsonResponse
     {
-        $data = $request->validate([
-            'user_id'      => ['sometimes', 'integer', 'exists:users,id'],
-            'task_name'    => ['sometimes', 'string', 'max:255'],
-            'project_id'   => ['sometimes', 'integer', 'exists:projects,id'],
-            'project_name' => ['sometimes', 'string', 'max:255'],
-            'status'       => ['sometimes', 'in:pending,on-going,testing,done'],
-            'start_date'   => ['sometimes', 'date'],
-            'due_date'     => ['sometimes', 'date'],
-        ]);
+        try {
+            if ($task->user_id !== auth()->id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You do not have access to this task.',
+                ], 403);
+            }
 
-        $task->update($data);
+            $data = $request->validate([
+                'task_name'  => ['sometimes', 'string', 'max:255'],
+                'project_id' => ['sometimes', 'integer', 'exists:projects,id'],
+                'status'     => ['sometimes', 'in:pending,on-going,testing,done'],
+                'start_date' => ['sometimes', 'date'],
+                'due_date'   => ['sometimes', 'date'],
+            ]);
 
-        return response()->json($task);
+            if (isset($data['project_id'])) {
+                $project = Projects::where('id', $data['project_id'])
+                    ->where('user_id', auth()->id())
+                    ->first();
+
+                if (!$project) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Project not found or you do not have access to it.',
+                    ], 404);
+                }
+                $data['project_name'] = $project->name;
+            }
+
+            $task->update($data);
+
+            return response()->json([
+                'success' => true,
+                'data'    => $task->fresh('project', 'user'),
+                'message' => 'Task updated successfully.',
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'errors'  => $e->errors(),
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Task update error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update task.',
+            ], 500);
+        }
     }
 
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(Task $task)
+    public function destroy(Task $task): JsonResponse
     {
-        $task->delete();
+        try {
+            if ($task->user_id !== auth()->id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You do not have access to this task.',
+                ], 403);
+            }
 
-        return response()->json(null, 204);
+            $task->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Task deleted successfully.',
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Task destroy error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete task.',
+            ], 500);
+        }
     }
 }

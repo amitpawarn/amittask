@@ -3,86 +3,173 @@
 namespace App\Http\Controllers;
 
 use App\Models\Projects;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class ProjectController extends Controller
 {
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(): JsonResponse
     {
-        $projects = Projects::with('tasks','user')->get();
-        return response()->json($projects);
-    }
+        try {
+            $projects = Projects::with('tasks', 'user')
+                ->where('user_id', auth()->id())
+                ->get();
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
+            if ($projects->isEmpty()) {
+                return response()->json([
+                    'success' => true,
+                    'data'    => [],
+                    'message' => 'No projects found.',
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data'    => $projects,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Project index error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch projects.',
+            ], 500);
+        }
     }
 
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
-        $data = $request->validate([
-            'user_id'    => ['required', 'integer', 'exists:users,id'],
-            'name'       => ['required', 'string', 'max:255'],
-            'start_date' => ['required', 'date'],
-            'end_date'   => ['required', 'date'],
-        ]);
+        try {
+            $data = $request->validate([
+                'name'       => ['required', 'string', 'max:255'],
+                'start_date' => ['required', 'date'],
+                'end_date'   => ['required', 'date'],
+            ]);
 
-        $project = Projects::create($data);
+            $data['user_id'] = auth()->id();
+            $project = Projects::create($data);
 
-        return response()->json($project, 201);
+            return response()->json([
+                'success' => true,
+                'data'    => $project,
+                'message' => 'Project created successfully.',
+            ], 201);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'errors'  => $e->errors(),
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Project store error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to create project.',
+            ], 500);
+        }
     }
 
     /**
      * Display the specified resource.
      */
-    public function show(Projects $project)
+    public function show(Projects $project): JsonResponse
     {
-        //dd($project);
-        $data = Projects::with('tasks','user')->where('id',$project->id)->first();
-        return response()->json($data);
-    }
+        try {
+            if ($project->user_id !== auth()->id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You do not have access to this project.',
+                ], 403);
+            }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(string $id)
-    {
-        //
+            $project->load('tasks', 'user');
+
+            return response()->json([
+                'success' => true,
+                'data'    => $project,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Project show error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch project.',
+            ], 500);
+        }
     }
 
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, Projects $project)
+    public function update(Request $request, Projects $project): JsonResponse
     {
-        $data = $request->validate([
-            'user_id'    => ['sometimes', 'integer', 'exists:users,id'],
-            'name'       => ['sometimes', 'string', 'max:255'],
-            'start_date' => ['sometimes', 'date'],
-            'end_date'   => ['sometimes', 'date'],
-        ]);
+        try {
+            if ($project->user_id !== auth()->id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You do not have access to this project.',
+                ], 403);
+            }
 
-        $project->update($data);
+            $data = $request->validate([
+                'name'       => ['sometimes', 'string', 'max:255'],
+                'start_date' => ['sometimes', 'date'],
+                'end_date'   => ['sometimes', 'date'],
+            ]);
 
-        return response()->json($project);
+            $project->update($data);
+
+            return response()->json([
+                'success' => true,
+                'data'    => $project->fresh('tasks', 'user'),
+                'message' => 'Project updated successfully.',
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'errors'  => $e->errors(),
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Project update error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update project.',
+            ], 500);
+        }
     }
 
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(Projects $project)
+    public function destroy(Projects $project): JsonResponse
     {
-        $project->delete();
+        try {
+            if ($project->user_id !== auth()->id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You do not have access to this project.',
+                ], 403);
+            }
 
-        return response()->json(null, 204);
+            $project->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Project deleted successfully.',
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Project destroy error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete project.',
+            ], 500);
+        }
     }
 }
